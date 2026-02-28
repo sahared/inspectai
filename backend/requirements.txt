@@ -1,0 +1,22 @@
+# InspectAI Backend Dependencies
+
+# Web framework
+fastapi==0.115.0
+uvicorn[standard]==0.30.0
+websockets==12.0
+python-multipart==0.0.9
+
+# Google AI
+google-genai==1.0.0
+
+# Google Cloud Services
+google-cloud-firestore==2.19.0
+google-cloud-storage==2.18.0
+google-cloud-secret-manager==2.20.0
+
+# PDF Report Generation
+reportlab==4.2.0
+
+# Utilities
+python-dotenv==1.0.1
+pydantic==2.9.0
