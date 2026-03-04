@@ -1,0 +1,11 @@
+frontend/node_modules
+learning/
+docs/
+backend/venv
+backend/local_storage
+backend/__pycache__
+backend/**/__pycache__
+.git
+*.pyc
+*.md
+terraform/
