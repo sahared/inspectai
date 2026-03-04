@@ -1,3 +1,6 @@
+from dotenv import load_dotenv
+load_dotenv()
+
 """
 InspectAI Backend — FastAPI Server
 Real-time AI-powered property inspection agent using Gemini Live API
@@ -11,7 +14,7 @@ from contextlib import asynccontextmanager
 
 from fastapi import FastAPI, WebSocket, WebSocketDisconnect, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import JSONResponse
+from fastapi.responses import JSONResponse, FileResponse
 
 from api.websocket import InspectionWebSocketHandler
 from services.firestore_service import FirestoreService
@@ -125,6 +128,28 @@ async def generate_report(session_id: str):
     return {"session_id": session_id, "report_url": report_url}
 
 
+
+
+@app.get("/api/reports/{session_id}")
+async def download_report(session_id: str):
+    """Download the generated inspection report PDF."""
+    import glob
+    pattern = f"local_storage/sessions/{session_id}/reports/*.pdf"
+    files = glob.glob(pattern)
+    if not files:
+        raise HTTPException(status_code=404, detail="Report not found")
+    return FileResponse(path=files[0], filename=f"InspectAI_Report_{session_id[:8]}.pdf", media_type="application/pdf")
+
+@app.get("/api/reports/{session_id}")
+async def download_report(session_id: str):
+    """Download the generated inspection report PDF."""
+    import glob
+    from fastapi.responses import FileResponse
+    pattern = f"local_storage/sessions/{session_id}/reports/*.pdf"
+    files = glob.glob(pattern)
+    if not files:
+        raise HTTPException(status_code=404, detail="Report not found")
+    return FileResponse(path=files[0], filename=f"InspectAI_Report_{session_id[:8]}.pdf", media_type="application/pdf")
 # =============================================================================
 # WEBSOCKET — Real-time Inspection
 # =============================================================================
