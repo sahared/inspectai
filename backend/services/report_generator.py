@@ -1,314 +1,186 @@
-"""
-Report Generator
-Creates professional PDF inspection reports from findings.
-"""
-
 import io
+import os
 import logging
 from datetime import datetime
-from typing import List
 
 logger = logging.getLogger(__name__)
 
-# Severity color mapping
 SEVERITY_COLORS = {
-    "minor": (76, 175, 80),       # Green
-    "moderate": (255, 152, 0),     # Orange
-    "severe": (244, 67, 54),       # Red
-    "critical": (156, 39, 176),    # Purple
+    "minor": (76, 175, 80),
+    "moderate": (255, 152, 0),
+    "severe": (244, 67, 54),
+    "critical": (156, 39, 176),
 }
 
-
 class ReportGenerator:
-    """Generates professional PDF inspection reports."""
-
     def __init__(self, storage_service):
         self.storage = storage_service
 
-    async def generate(
-        self,
-        session_id: str,
-        session_data: dict,
-        findings: list,
-    ) -> str:
-        """
-        Generate a PDF report and upload to Cloud Storage.
-        Returns the report URL.
-        """
+    async def generate(self, session_id, session_data, findings):
         try:
             pdf_bytes = self._build_pdf(session_id, session_data, findings)
             report_url = await self.storage.upload_report(session_id, pdf_bytes)
-            logger.info(f"Report generated for session {session_id}: {report_url}")
+            logger.info(f"Report generated for session {session_id}")
             return report_url
-        except ImportError:
-            # If reportlab not available, generate a simple text report
-            logger.warning("reportlab not available, generating text report")
-            text_report = self._build_text_report(
-                session_id, session_data, findings
-            )
-            report_url = await self.storage.upload_file(
-                text_report.encode("utf-8"),
-                f"sessions/{session_id}/reports/inspection_report.txt",
-                "text/plain",
-            )
-            return report_url
+        except Exception as e:
+            logger.error(f"PDF generation failed: {e}")
+            text = self._build_text_report(session_id, session_data, findings)
+            return await self.storage.upload_file(text.encode(), f"sessions/{session_id}/reports/report.txt", "text/plain")
 
-    def _build_pdf(
-        self,
-        session_id: str,
-        session_data: dict,
-        findings: list,
-    ) -> bytes:
-        """Build the PDF report using reportlab."""
+    def _build_pdf(self, session_id, session_data, findings):
         from reportlab.lib.pagesizes import letter
         from reportlab.lib import colors
         from reportlab.lib.styles import getSampleStyleSheet, ParagraphStyle
         from reportlab.lib.units import inch
-        from reportlab.platypus import (
-            SimpleDocTemplate, Paragraph, Spacer, Table, TableStyle,
-            HRFlowable, PageBreak
-        )
+        from reportlab.platypus import SimpleDocTemplate, Paragraph, Spacer, Table, TableStyle, HRFlowable, Image
 
         buffer = io.BytesIO()
-        doc = SimpleDocTemplate(
-            buffer,
-            pagesize=letter,
-            rightMargin=72,
-            leftMargin=72,
-            topMargin=72,
-            bottomMargin=72,
-        )
-
+        doc = SimpleDocTemplate(buffer, pagesize=letter, rightMargin=60, leftMargin=60, topMargin=60, bottomMargin=60)
         styles = getSampleStyleSheet()
         story = []
 
-        # Custom styles
-        title_style = ParagraphStyle(
-            "CustomTitle",
-            parent=styles["Title"],
-            fontSize=24,
-            spaceAfter=6,
-            textColor=colors.HexColor("#1A56DB"),
-        )
-        heading_style = ParagraphStyle(
-            "CustomHeading",
-            parent=styles["Heading2"],
-            fontSize=14,
-            spaceAfter=12,
-            spaceBefore=20,
-            textColor=colors.HexColor("#1A56DB"),
-        )
-        body_style = styles["Normal"]
+        # Styles that WRAP text properly using Paragraph
+        cell = ParagraphStyle("Cell", parent=styles["Normal"], fontSize=9, leading=12)
+        cellb = ParagraphStyle("CellBold", parent=styles["Normal"], fontSize=9, leading=12, fontName="Helvetica-Bold")
+        title = ParagraphStyle("Title2", parent=styles["Title"], fontSize=24, spaceAfter=6, textColor=colors.HexColor("#1A56DB"))
+        heading = ParagraphStyle("Head", parent=styles["Heading2"], fontSize=14, spaceAfter=12, spaceBefore=20, textColor=colors.HexColor("#1A56DB"))
 
-        # =====================================================================
-        # HEADER
-        # =====================================================================
-        story.append(Paragraph("InspectAI", title_style))
+        # Header
+        story.append(Paragraph("InspectAI", title))
         story.append(Paragraph("Property Damage Inspection Report", styles["Heading2"]))
-        story.append(HRFlowable(
-            width="100%", thickness=2,
-            color=colors.HexColor("#1A56DB"), spaceAfter=20
-        ))
+        story.append(HRFlowable(width="100%", thickness=2, color=colors.HexColor("#1A56DB"), spaceAfter=20))
 
-        # Report metadata
-        claim_type = session_data.get("claim_type", "Property Damage")
+        # Metadata
         created = session_data.get("created_at", datetime.utcnow().isoformat())
-        meta_data = [
-            ["Report ID:", session_id[:8].upper()],
-            ["Claim Type:", claim_type.replace("_", " ").title()],
-            ["Inspection Date:", created[:10]],
-            ["Total Findings:", str(len(findings))],
-            ["Generated:", datetime.utcnow().strftime("%Y-%m-%d %H:%M UTC")],
-        ]
-        meta_table = Table(meta_data, colWidths=[120, 350])
-        meta_table.setStyle(TableStyle([
-            ("FONTNAME", (0, 0), (0, -1), "Helvetica-Bold"),
-            ("FONTNAME", (1, 0), (1, -1), "Helvetica"),
-            ("FONTSIZE", (0, 0), (-1, -1), 10),
-            ("BOTTOMPADDING", (0, 0), (-1, -1), 4),
-        ]))
-        story.append(meta_table)
-        story.append(Spacer(1, 20))
+        for label, val in [
+            ("Report ID", session_id[:8].upper()),
+            ("Claim Type", session_data.get("claim_type", "Property Damage").replace("_", " ").title()),
+            ("Inspection Date", created[:10]),
+            ("Total Findings", str(len(findings))),
+            ("Generated", datetime.utcnow().strftime("%Y-%m-%d %H:%M UTC")),
+        ]:
+            story.append(Paragraph(f"<b>{label}:</b> {val}", cell))
+        story.append(Spacer(1, 16))
 
-        # =====================================================================
-        # EXECUTIVE SUMMARY
-        # =====================================================================
-        story.append(Paragraph("Executive Summary", heading_style))
-
-        # Severity breakdown
-        severity_counts = {}
+        # Summary
+        story.append(Paragraph("Executive Summary", heading))
+        sev_counts = {}
         for f in findings:
-            sev = f.get("severity", "unknown")
-            severity_counts[sev] = severity_counts.get(sev, 0) + 1
+            s = f.get("severity", "unknown")
+            sev_counts[s] = sev_counts.get(s, 0) + 1
+        rooms = set(f.get("room", "Unknown") for f in findings)
+        parts = [f"{c} {s}" for s, c in sev_counts.items()]
+        story.append(Paragraph(
+            f"This inspection identified <b>{len(findings)}</b> findings across "
+            f"<b>{len(rooms)}</b> area(s). Severity: {', '.join(parts)}.",
+            styles["Normal"]
+        ))
+        story.append(Spacer(1, 16))
 
-        summary_text = (
-            f"This inspection identified {len(findings)} findings across "
-            f"{len(set(f.get('room', '') for f in findings))} areas. "
-        )
-        if severity_counts:
-            parts = [f"{count} {sev}" for sev, count in severity_counts.items()]
-            summary_text += f"Severity breakdown: {', '.join(parts)}."
-
-        story.append(Paragraph(summary_text, body_style))
-        story.append(Spacer(1, 12))
-
-        # Severity summary table
-        if severity_counts:
-            sev_data = [["Severity", "Count"]]
-            for sev in ["critical", "severe", "moderate", "minor"]:
-                if sev in severity_counts:
-                    sev_data.append([sev.upper(), str(severity_counts[sev])])
-
-            sev_table = Table(sev_data, colWidths=[200, 100])
-            sev_table.setStyle(TableStyle([
+        # Severity table
+        if sev_counts:
+            sev_data = [[Paragraph("<b>Severity</b>", cellb), Paragraph("<b>Count</b>", cellb)]]
+            for s in ["critical", "severe", "moderate", "minor"]:
+                if s in sev_counts:
+                    sev_data.append([Paragraph(s.upper(), cell), Paragraph(str(sev_counts[s]), cell)])
+            st = Table(sev_data, colWidths=[200, 100])
+            st.setStyle(TableStyle([
                 ("BACKGROUND", (0, 0), (-1, 0), colors.HexColor("#1A56DB")),
                 ("TEXTCOLOR", (0, 0), (-1, 0), colors.white),
-                ("FONTNAME", (0, 0), (-1, 0), "Helvetica-Bold"),
-                ("FONTSIZE", (0, 0), (-1, -1), 10),
                 ("GRID", (0, 0), (-1, -1), 0.5, colors.grey),
                 ("BOTTOMPADDING", (0, 0), (-1, -1), 6),
                 ("TOPPADDING", (0, 0), (-1, -1), 6),
                 ("LEFTPADDING", (0, 0), (-1, -1), 10),
             ]))
-            story.append(sev_table)
-            story.append(Spacer(1, 20))
+            story.append(st)
+            story.append(Spacer(1, 16))
 
-        # =====================================================================
-        # DETAILED FINDINGS
-        # =====================================================================
-        story.append(Paragraph("Detailed Findings", heading_style))
+        # Detailed Findings
+        story.append(Paragraph("Detailed Findings", heading))
 
-        for i, finding in enumerate(findings):
-            # Finding header
-            evidence_num = finding.get("evidence_number", i + 1)
-            room = finding.get("room", "Unknown").replace("_", " ").title()
-            damage_type = finding.get("damage_type", "Unknown").replace("_", " ").title()
-            severity = finding.get("severity", "unknown").upper()
+        for i, f in enumerate(findings):
+            num = f.get("evidence_number", i + 1)
+            room = f.get("room", "Unknown").replace("_", " ").title()
+            dtype = f.get("damage_type", "Unknown").replace("_", " ").title()
+            sev = f.get("severity", "unknown")
+            desc = f.get("description", "No description")
+            action = f.get("recommended_action", "")
+            ts = f.get("timestamp", "")
+            photo = f.get("photo_path", "")
 
-            story.append(Paragraph(
-                f"<b>Evidence #{evidence_num}: {damage_type} — {room}</b>",
-                ParagraphStyle(
-                    f"finding_{i}",
-                    parent=styles["Heading3"],
-                    fontSize=12,
-                    spaceBefore=16,
-                    spaceAfter=4,
-                )
-            ))
-
-            # Finding details table
-            detail_data = [
-                ["Severity:", severity],
-                ["Location:", room],
-                ["Type:", damage_type],
-                ["Description:", finding.get("description", "No description")],
-            ]
-            if finding.get("recommended_action"):
-                detail_data.append([
-                    "Recommended Action:", finding["recommended_action"]
-                ])
-            if finding.get("timestamp"):
-                detail_data.append(["Documented At:", finding["timestamp"][:19]])
-
-            detail_table = Table(detail_data, colWidths=[130, 340])
-
-            # Color-code severity
-            sev_lower = finding.get("severity", "minor")
-            sev_color = SEVERITY_COLORS.get(sev_lower, (128, 128, 128))
+            sev_color = SEVERITY_COLORS.get(sev, (128, 128, 128))
             sev_hex = "#{:02x}{:02x}{:02x}".format(*sev_color)
 
-            detail_table.setStyle(TableStyle([
-                ("FONTNAME", (0, 0), (0, -1), "Helvetica-Bold"),
-                ("FONTSIZE", (0, 0), (-1, -1), 9),
+            story.append(Paragraph(
+                f"<b>Evidence #{num}: {dtype} — {room}</b>",
+                ParagraphStyle(f"fh{i}", parent=styles["Heading3"], fontSize=11, spaceBefore=14, spaceAfter=4)
+            ))
+
+            # Use Paragraph for EVERY cell so text wraps properly
+            rows = [
+                [Paragraph("<b>Severity</b>", cellb), Paragraph(sev.upper(), cell)],
+                [Paragraph("<b>Location</b>", cellb), Paragraph(room, cell)],
+                [Paragraph("<b>Type</b>", cellb), Paragraph(dtype, cell)],
+                [Paragraph("<b>Description</b>", cellb), Paragraph(desc, cell)],
+            ]
+            if action:
+                rows.append([Paragraph("<b>Action</b>", cellb), Paragraph(action, cell)])
+            if ts:
+                rows.append([Paragraph("<b>Documented</b>", cellb), Paragraph(ts[:19], cell)])
+
+            t = Table(rows, colWidths=[90, 400])
+            t.setStyle(TableStyle([
+                ("VALIGN", (0, 0), (-1, -1), "TOP"),
                 ("BOTTOMPADDING", (0, 0), (-1, -1), 4),
                 ("TOPPADDING", (0, 0), (-1, -1), 4),
-                ("LEFTPADDING", (0, 0), (-1, -1), 8),
+                ("LEFTPADDING", (0, 0), (-1, -1), 6),
                 ("BACKGROUND", (1, 0), (1, 0), colors.HexColor(sev_hex)),
                 ("TEXTCOLOR", (1, 0), (1, 0), colors.white),
-                ("VALIGN", (0, 0), (-1, -1), "TOP"),
+                ("BOX", (0, 0), (-1, -1), 0.5, colors.HexColor("#dddddd")),
+                ("LINEBELOW", (0, 0), (-1, -2), 0.25, colors.HexColor("#eeeeee")),
             ]))
-            story.append(detail_table)
-            story.append(Spacer(1, 8))
+            story.append(t)
 
-        # =====================================================================
-        # AREAS INSPECTED
-        # =====================================================================
-        story.append(Paragraph("Areas Inspected", heading_style))
-        areas = session_data.get("areas_inspected", [])
-        if areas:
-            areas_text = ", ".join(
-                a.replace("_", " ").title() for a in sorted(areas)
-            )
-            story.append(Paragraph(areas_text, body_style))
-        else:
-            story.append(Paragraph("No areas recorded.", body_style))
+            # Include evidence photo if available
+            if photo and os.path.exists(photo):
+                try:
+                    story.append(Spacer(1, 4))
+                    story.append(Image(photo, width=3 * inch, height=2.25 * inch))
+                    story.append(Paragraph(
+                        f"<i>Photo evidence #{num}</i>",
+                        ParagraphStyle("cap", parent=cell, fontSize=7, textColor=colors.grey, alignment=1)
+                    ))
+                except Exception as e:
+                    logger.warning(f"Photo error: {e}")
 
+            story.append(Spacer(1, 6))
+
+        # Areas Inspected
+        story.append(Paragraph("Areas Inspected", heading))
+        story.append(Paragraph(
+            ", ".join(r.replace("_", " ").title() for r in sorted(rooms)),
+            styles["Normal"]
+        ))
         story.append(Spacer(1, 20))
 
-        # =====================================================================
-        # DISCLAIMER
-        # =====================================================================
-        story.append(HRFlowable(
-            width="100%", thickness=1, color=colors.grey, spaceAfter=12
-        ))
-        disclaimer_style = ParagraphStyle(
-            "Disclaimer",
-            parent=body_style,
-            fontSize=8,
-            textColor=colors.grey,
-        )
+        # Disclaimer
+        story.append(HRFlowable(width="100%", thickness=1, color=colors.grey, spaceAfter=12))
         story.append(Paragraph(
-            "<b>Disclaimer:</b> This report was generated by InspectAI, an AI-powered "
-            "inspection tool. It is intended to assist in the insurance claims process "
-            "and does not constitute a professional structural engineering assessment. "
-            "For structural concerns, please consult a licensed professional. "
-            "Cost estimates are approximate and based on industry averages.",
-            disclaimer_style,
+            "<b>Disclaimer:</b> This report was generated by InspectAI, an AI-powered inspection tool. "
+            "It does not constitute a professional structural engineering assessment. "
+            "For structural concerns, consult a licensed professional.",
+            ParagraphStyle("disc", parent=styles["Normal"], fontSize=8, textColor=colors.grey)
         ))
 
-        # Build PDF
         doc.build(story)
         buffer.seek(0)
         return buffer.read()
 
-    def _build_text_report(
-        self,
-        session_id: str,
-        session_data: dict,
-        findings: list,
-    ) -> str:
-        """Fallback: generate a plain text report."""
-        lines = [
-            "=" * 60,
-            "INSPECTAI — PROPERTY DAMAGE INSPECTION REPORT",
-            "=" * 60,
-            "",
-            f"Report ID: {session_id[:8].upper()}",
-            f"Claim Type: {session_data.get('claim_type', 'Property Damage')}",
-            f"Date: {datetime.utcnow().strftime('%Y-%m-%d %H:%M UTC')}",
-            f"Total Findings: {len(findings)}",
-            "",
-            "-" * 60,
-            "FINDINGS",
-            "-" * 60,
-        ]
-
+    def _build_text_report(self, session_id, session_data, findings):
+        lines = ["=" * 60, "INSPECTAI INSPECTION REPORT", "=" * 60, f"ID: {session_id[:8]}", f"Findings: {len(findings)}", ""]
         for f in findings:
             lines.extend([
-                "",
-                f"Evidence #{f.get('evidence_number', '?')}: "
-                f"{f.get('damage_type', 'Unknown').replace('_', ' ').title()}",
-                f"  Room: {f.get('room', 'Unknown').replace('_', ' ').title()}",
-                f"  Severity: {f.get('severity', 'Unknown').upper()}",
-                f"  Description: {f.get('description', 'N/A')}",
-                f"  Recommended: {f.get('recommended_action', 'N/A')}",
+                f"#{f.get('evidence_number', '?')} [{f.get('severity', '?').upper()}] {f.get('damage_type', '?')} in {f.get('room', '?')}",
+                f"  {f.get('description', 'N/A')}", ""
             ])
-
-        lines.extend([
-            "",
-            "-" * 60,
-            "This report was generated by InspectAI.",
-            "It does not constitute a professional engineering assessment.",
-        ])
-
         return "\n".join(lines)
